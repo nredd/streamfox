@@ -8,8 +8,9 @@ import asyncio
 import cv2
 import logging
 import numpy as np
-import time
+import pathlib
 import requests
+import time
 import yaml
 from concurrent.futures import ThreadPoolExecutor
 from selenium import webdriver
@@ -38,6 +39,7 @@ class VideoCrawler:
         self.max_depth = max_depth
         self.headless = headless
         self.driver = self.init_driver()
+        LOGGER.info(f"VideoCrawler with {self.base_url}")
 
     def init_driver(self):
         """Initialize Selenium WebDriver"""
@@ -64,8 +66,10 @@ class VideoCrawler:
             if "youtube.com" in src or "vimeo.com" in src:
                 self.video_urls.add(src)
 
-    def crawl(self, url, depth=0):
+    def crawl(self, url=None, depth=0):
         """Recursively crawl a website to extract video streams"""
+        url = self.base_url if url is None else url
+
         if depth > self.max_depth or url in self.visited_urls:
             return
         self.visited_urls.add(url)
@@ -81,7 +85,7 @@ class VideoCrawler:
                     self.crawl(next_url, depth + 1)
 
         except Exception as e:
-            LOGGER.info(f"[Error] Failed to crawl {url}: {e}")
+            LOGGER.error(f"Failed to crawl {url}: {e}")
 
     def close(self):
         """Close the Selenium WebDriver"""
@@ -101,20 +105,20 @@ class AsyncStreamMonitor:
 
         latency_ok = await self.loop.run_in_executor(self.executor, self.check_latency, url)
         if not latency_ok:
-            LOGGER.info(f"[WARN] {url} is slow or unresponsive.")
+            LOGGER.warning(f"{url} is slow or unresponsive.")
             return False
 
         stream_active = await self.loop.run_in_executor(self.executor, self.is_stream_active, url)
         if not stream_active:
-            LOGGER.info(f"[WARN] {url} appears to be frozen or not updating frames.")
+            LOGGER.warning(f"[{url} appears to be frozen or not updating frames.")
             return False
 
         fps_ok = await self.loop.run_in_executor(self.executor, self.check_fps, url)
         if not fps_ok:
-            LOGGER.info(f"[WARN] {url} has low FPS or excessive buffering.")
+            LOGGER.warning(f"{url} has low FPS or excessive buffering.")
             return False
 
-        LOGGER.info(f"[OK] {url} is running smoothly.")
+        LOGGER.info(f"[{url} is running smoothly.")
         return True
 
     def check_latency(self, url):
@@ -192,7 +196,7 @@ class AsyncStreamMonitor:
         while True:
             tasks = [self.check_stream(url) for url in self.video_urls]
             await asyncio.gather(*tasks)
-            LOGGER.info("\n[INFO] Waiting for next check...\n")
+            LOGGER.info("Waiting for next check...\n")
             await asyncio.sleep(self.check_interval)
 
     def start_monitoring(self):
@@ -200,7 +204,7 @@ class AsyncStreamMonitor:
         try:
             self.loop.run_until_complete(self.monitor_streams())
         except KeyboardInterrupt:
-            LOGGER.info("\n[INFO] Stopping monitoring...")
+            LOGGER.info("Stopping monitoring...")
         finally:
             self.executor.shutdown()
 
@@ -212,18 +216,20 @@ if __name__ == "__main__":
     if args.debug:
         LOGGER.set_level(logging.DEBUG)
     
-    streams_yaml = (pathlib.Path(__file__) / 'streams.yaml').resolve()
+    streams_yaml = (pathlib.Path(__file__).parent / 'streams.yaml').resolve()
     streams_yaml = yaml.safe_load(open(streams_yaml))
-    for s in streams_yaml['streams']:
+    for s in streams_yaml['streams']:  # TODO(redd): crawl in parallel
         crawler = VideoCrawler(s, max_depth=20, headless=True)
-        LOGGER.info(f"[INFO] Crawling {base_url} for video streams...")
-        crawler.crawl(base_url)
+        crawler.crawl()
         crawler.close()
 
         # Step 2: Monitor extracted video streams
         if crawler.video_urls:
-            LOGGER.info(f"[INFO] Found {len(crawler.video_urls)} video streams. Starting monitoring...")
+            LOGGER.info(f"Found {len(crawler.video_urls)} video streams. Starting monitoring...")
             monitor = AsyncStreamMonitor(crawler.video_urls, check_interval=10, max_workers=5)
             monitor.start_monitoring()
         else:
-            LOGGER.info("[ERROR] No video streams found!")
+            LOGGER.error(" No video streams found!")
+
+
+
