@@ -266,9 +266,10 @@ Examples:
                     else:
                         player = StreamPlayer(direct_streams)
                         player.play()
+                    # Only return if we actually played something with the video player
+                    return
                 elif not iframe_urls:
                     logger.warning("No playable streams found (only non-direct URLs)")
-                return
         finally:
             crawler.close()
 
