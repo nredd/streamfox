@@ -1,6 +1,21 @@
+# Streamfox configuration file
+# Add your legitimate stream URLs here
+
+# Example legitimate streaming sources:
+# - NASA TV (public domain)
+# - Public webcams
+# - Your own streaming infrastructure
+# - Authorized streaming services you have access to
+
 streams:
-  - https://crackstreams.cx
-  - https://mmastreams.app
-  - https://methstreams.li
-  - https://1stream.eu
-  - https://buffstreams.app
+  # NASA TV - Public live stream
+  - https://www.nasa.gov/live
+
+  # Example: Add your own streams below
+  # - https://example.com/your-stream.m3u8
+  # - https://your-streaming-server.com/live
+
+# Notes:
+# - Only use streams you are authorized to access
+# - Commercial sports streams typically require paid subscriptions
+# - Check the terms of service for any streaming platform you use

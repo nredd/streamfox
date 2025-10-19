@@ -169,3 +169,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Project-specific
+streamfox.py.old
+*.old
+*.bak
+.DS_Store
+.vscode/
+.ruff_cache/
+requirements.txt  # Use pyproject.toml instead
