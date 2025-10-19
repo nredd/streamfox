@@ -3,6 +3,7 @@
 import argparse
 import logging
 import pathlib
+import time
 import webbrowser
 
 import yaml
@@ -63,6 +64,36 @@ def is_direct_stream_url(url: str) -> bool:
 
     # Default: assume it's NOT a direct stream to be safe
     return False
+
+
+def add_autoplay_to_url(url: str) -> str:
+    """
+    Add autoplay parameters to iframe/embed URLs for automatic playback.
+
+    Args:
+        url: The iframe/embed URL.
+
+    Returns:
+        URL with autoplay parameters added.
+    """
+    # YouTube embeds
+    if "youtube.com/embed" in url or "youtube-nocookie.com/embed" in url:
+        separator = "&" if "?" in url else "?"
+        # Add autoplay, mute (required by browsers), and remove controls for cleaner view
+        return f"{url}{separator}autoplay=1&mute=1"
+
+    # Vimeo embeds
+    if "vimeo.com" in url:
+        separator = "&" if "?" in url else "?"
+        return f"{url}{separator}autoplay=1&muted=1"
+
+    # Twitch embeds
+    if "twitch.tv" in url:
+        separator = "&" if "?" in url else "?"
+        return f"{url}{separator}autoplay=true&muted=false"
+
+    # Default: return as-is for unknown platforms
+    return url
 
 
 def load_streams_from_yaml(yaml_path: pathlib.Path | None = None) -> list[str]:
@@ -229,47 +260,62 @@ Examples:
                 for idx, url in enumerate(crawler.video_urls, 1):
                     logger.info("  %d. %s", idx, url)
 
-                # Open iframe URLs in browser
+                # Open iframe URLs in browser with autoplay
                 if iframe_urls:
                     logger.info(
-                        "Opening %d iframe/embed URLs in browser (can't play HTML with video player)...",
+                        "Opening %d iframe/embed URLs in browser with autoplay...",
                         len(iframe_urls),
                     )
                     for url in iframe_urls:
-                        logger.info("  Opening in browser: %s", url)
-                        webbrowser.open(url)
+                        autoplay_url = add_autoplay_to_url(url)
+                        logger.info("  Opening in browser: %s", autoplay_url)
+                        webbrowser.open(autoplay_url)
 
                 # Play direct streams with video player
                 if direct_streams:
                     logger.info("Playing %d direct stream URLs...", len(direct_streams))
 
-                    # Set up continuous mode if requested
-                    if args.continuous:
-                        logger.info(
-                            "Setting up continuous playback with pool size %d", args.pool_size
-                        )
-                        stream_pool = StreamPool(
-                            initial_streams=direct_streams,
-                            min_pool_size=args.pool_size,
-                        )
-                        stream_pool.start_monitoring()
+                    # Enable continuous mode by default for better UX
+                    if not args.continuous:
+                        logger.info("Enabling continuous playback mode (use Ctrl+C to stop)")
+                        args.continuous = True
 
-                        player = StreamPlayer(
-                            stream_urls=direct_streams,
-                            continuous=True,
-                            stream_pool=stream_pool,
-                        )
-                        try:
-                            player.play()
-                        finally:
-                            stream_pool.stop_monitoring()
-                    else:
-                        player = StreamPlayer(direct_streams)
+                    # Set up continuous mode
+                    logger.info("Setting up continuous playback with pool size %d", args.pool_size)
+                    stream_pool = StreamPool(
+                        initial_streams=direct_streams,
+                        min_pool_size=args.pool_size,
+                    )
+                    stream_pool.start_monitoring()
+
+                    player = StreamPlayer(
+                        stream_urls=direct_streams,
+                        continuous=True,
+                        stream_pool=stream_pool,
+                    )
+                    try:
                         player.play()
+                    finally:
+                        stream_pool.stop_monitoring()
                     # Only return if we actually played something with the video player
                     return
-                elif not iframe_urls:
-                    logger.warning("No playable streams found (only non-direct URLs)")
+
+                # If we only have iframe URLs, keep the app alive
+                if iframe_urls and not direct_streams:
+                    logger.info(
+                        "Streams opened in browser. App will keep running (press Ctrl+C to exit)..."
+                    )
+                    try:
+                        # Keep alive loop - wait for user interrupt
+                        while True:
+                            time.sleep(60)  # Check every minute
+                            logger.debug("Keep-alive: streams running in browser...")
+                    except KeyboardInterrupt:
+                        logger.info("Shutting down...")
+                        return
+
+                if not iframe_urls and not direct_streams:
+                    logger.warning("No playable streams found")
         finally:
             crawler.close()
 
@@ -290,43 +336,59 @@ Examples:
             for idx, url in enumerate(all_video_urls, 1):
                 logger.info("  %d. %s", idx, url)
 
-            # Open iframe URLs in browser
+            # Open iframe URLs in browser with autoplay
             if iframe_urls:
                 logger.info(
-                    "Opening %d iframe/embed URLs in browser (can't play HTML with video player)...",
+                    "Opening %d iframe/embed URLs in browser with autoplay...",
                     len(iframe_urls),
                 )
                 for url in iframe_urls:
-                    logger.info("  Opening in browser: %s", url)
-                    webbrowser.open(url)
+                    autoplay_url = add_autoplay_to_url(url)
+                    logger.info("  Opening in browser: %s", autoplay_url)
+                    webbrowser.open(autoplay_url)
 
             # Play direct streams with video player
             if direct_streams:
                 logger.info("Playing %d direct stream URLs...", len(direct_streams))
 
-                # Set up continuous mode if requested
-                if args.continuous:
-                    logger.info("Setting up continuous playback with pool size %d", args.pool_size)
-                    stream_pool = StreamPool(
-                        initial_streams=direct_streams,
-                        min_pool_size=args.pool_size,
-                    )
-                    stream_pool.start_monitoring()
+                # Enable continuous mode by default for better UX
+                if not args.continuous:
+                    logger.info("Enabling continuous playback mode (use Ctrl+C to stop)")
+                    args.continuous = True
 
-                    player = StreamPlayer(
-                        stream_urls=direct_streams,
-                        continuous=True,
-                        stream_pool=stream_pool,
-                    )
-                    try:
-                        player.play()
-                    finally:
-                        stream_pool.stop_monitoring()
-                else:
-                    player = StreamPlayer(direct_streams)
+                # Set up continuous mode
+                logger.info("Setting up continuous playback with pool size %d", args.pool_size)
+                stream_pool = StreamPool(
+                    initial_streams=direct_streams,
+                    min_pool_size=args.pool_size,
+                )
+                stream_pool.start_monitoring()
+
+                player = StreamPlayer(
+                    stream_urls=direct_streams,
+                    continuous=True,
+                    stream_pool=stream_pool,
+                )
+                try:
                     player.play()
-            elif not iframe_urls:
-                logger.warning("No playable streams found (only non-direct URLs)")
+                finally:
+                    stream_pool.stop_monitoring()
+
+            # If we only have iframe URLs, keep the app alive
+            elif iframe_urls:
+                logger.info(
+                    "Streams opened in browser. App will keep running (press Ctrl+C to exit)..."
+                )
+                try:
+                    # Keep alive loop - wait for user interrupt
+                    while True:
+                        time.sleep(60)  # Check every minute
+                        logger.debug("Keep-alive: streams running in browser...")
+                except KeyboardInterrupt:
+                    logger.info("Shutting down...")
+
+            else:
+                logger.warning("No playable streams found")
     else:
         logger.error("No video streams found!")
 
