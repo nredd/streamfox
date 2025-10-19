@@ -12,6 +12,7 @@ from .crawler import VideoCrawler
 from .monitor import AsyncStreamMonitor
 from .player import StreamPlayer
 from .stream_pool import StreamPool
+from .types import QualityThresholds
 
 logger = logging.getLogger(__name__)
 
@@ -215,9 +216,57 @@ Examples:
         default=3,
         help="Minimum number of backup streams to maintain in continuous mode (default: 3)",
     )
+    parser.add_argument(
+        "--enable-quality-monitoring",
+        action="store_true",
+        default=True,
+        help="Enable real-time quality monitoring during playback (default: True)",
+    )
+    parser.add_argument(
+        "--disable-quality-monitoring",
+        action="store_true",
+        help="Disable real-time quality monitoring",
+    )
+    parser.add_argument(
+        "--quality-check-interval",
+        type=float,
+        default=10.0,
+        help="Seconds between quality checks during playback (default: 10.0)",
+    )
+    parser.add_argument(
+        "--max-latency",
+        type=float,
+        default=3000.0,
+        help="Maximum acceptable latency in milliseconds (default: 3000.0)",
+    )
+    parser.add_argument(
+        "--min-fps",
+        type=float,
+        default=5.0,
+        help="Minimum acceptable frames per second (default: 5.0)",
+    )
+    parser.add_argument(
+        "--switch-threshold",
+        type=float,
+        default=0.3,
+        help="Quality score difference required to trigger stream switch (default: 0.3)",
+    )
 
     args = parser.parse_args()
     setup_logging(args.debug)
+
+    # Handle quality monitoring flag
+    enable_quality_monitoring = (
+        args.enable_quality_monitoring and not args.disable_quality_monitoring
+    )
+
+    # Create quality thresholds from CLI arguments
+    quality_thresholds = QualityThresholds(
+        max_latency_ms=args.max_latency,
+        min_fps=args.min_fps,
+        quality_check_interval_seconds=args.quality_check_interval,
+        switch_threshold_score=args.switch_threshold,
+    )
 
     # Determine stream sources
     if args.url:
@@ -285,6 +334,7 @@ Examples:
                     stream_pool = StreamPool(
                         initial_streams=direct_streams,
                         min_pool_size=args.pool_size,
+                        quality_thresholds=quality_thresholds,
                     )
                     stream_pool.start_monitoring()
 
@@ -292,6 +342,8 @@ Examples:
                         stream_urls=direct_streams,
                         continuous=True,
                         stream_pool=stream_pool,
+                        enable_quality_monitoring=enable_quality_monitoring,
+                        quality_thresholds=quality_thresholds,
                     )
                     try:
                         player.play()
@@ -361,6 +413,7 @@ Examples:
                 stream_pool = StreamPool(
                     initial_streams=direct_streams,
                     min_pool_size=args.pool_size,
+                    quality_thresholds=quality_thresholds,
                 )
                 stream_pool.start_monitoring()
 
@@ -368,6 +421,8 @@ Examples:
                     stream_urls=direct_streams,
                     continuous=True,
                     stream_pool=stream_pool,
+                    enable_quality_monitoring=enable_quality_monitoring,
+                    quality_thresholds=quality_thresholds,
                 )
                 try:
                     player.play()

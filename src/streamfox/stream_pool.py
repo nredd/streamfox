@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 import requests
 
-from .types import StreamURL
+from .types import QualityThresholds, StreamQualityMetrics, StreamURL
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,8 @@ class StreamPool:
         failed_streams: Set of URLs that have failed validation.
         min_pool_size: Minimum number of streams to keep in the pool.
         health_check_interval: Seconds between health checks.
+        quality_metrics: Dictionary mapping stream URLs to their latest quality metrics.
+        quality_thresholds: Thresholds for determining stream health.
     """
 
     def __init__(
@@ -36,6 +38,7 @@ class StreamPool:
         initial_streams: list[StreamURL] | None = None,
         min_pool_size: int = 3,
         health_check_interval: int = 30,
+        quality_thresholds: QualityThresholds | None = None,
     ) -> None:
         """
         Initialize the stream pool.
@@ -44,11 +47,14 @@ class StreamPool:
             initial_streams: Initial list of stream URLs to validate.
             min_pool_size: Minimum number of healthy streams to maintain (default: 3).
             health_check_interval: Seconds between health checks (default: 30).
+            quality_thresholds: Thresholds for quality-based health checks (uses defaults if None).
         """
         self.healthy_streams: deque[StreamURL] = deque()
         self.failed_streams: set[StreamURL] = set()
         self.min_pool_size = min_pool_size
         self.health_check_interval = health_check_interval
+        self.quality_thresholds = quality_thresholds or QualityThresholds()
+        self.quality_metrics: dict[StreamURL, StreamQualityMetrics] = {}
         self._lock = threading.Lock()
         self._monitoring = False
         self._monitor_thread: threading.Thread | None = None
@@ -264,3 +270,103 @@ class StreamPool:
             callback: Function to call with the stream URL when a stream is added.
         """
         self._stream_added_callback = callback
+
+    def update_quality_metrics(self, metrics: StreamQualityMetrics) -> None:
+        """
+        Update quality metrics for a stream.
+
+        Args:
+            metrics: The quality metrics to store.
+        """
+        with self._lock:
+            self.quality_metrics[metrics.url] = metrics
+
+            # If stream is unhealthy, consider marking it as failed
+            if not metrics.is_healthy(self.quality_thresholds):
+                logger.warning(
+                    "Stream quality degraded (score: %.2f): %s",
+                    metrics.quality_score,
+                    metrics.url,
+                )
+
+    def get_quality_score(self, url: StreamURL) -> float:
+        """
+        Get the quality score for a stream.
+
+        Args:
+            url: The stream URL.
+
+        Returns:
+            Quality score from 0.0 to 1.0, or 0.5 if no metrics available.
+        """
+        with self._lock:
+            if url in self.quality_metrics:
+                return self.quality_metrics[url].quality_score
+            return 0.5  # Default neutral score for unknown streams
+
+    def get_best_quality_stream(self) -> StreamURL | None:
+        """
+        Get the highest quality stream from the pool without removing it.
+
+        Returns:
+            The URL of the best quality stream, or None if pool is empty.
+        """
+        with self._lock:
+            if not self.healthy_streams:
+                return None
+
+            # Sort streams by quality score (highest first)
+            ranked_streams = sorted(
+                self.healthy_streams,
+                key=lambda url: self.get_quality_score(url),
+                reverse=True,
+            )
+
+            return ranked_streams[0] if ranked_streams else None
+
+    def get_ranked_streams(self) -> list[tuple[StreamURL, float]]:
+        """
+        Get all healthy streams ranked by quality score.
+
+        Returns:
+            List of (url, quality_score) tuples sorted by score (highest first).
+        """
+        with self._lock:
+            ranked = [(url, self.get_quality_score(url)) for url in self.healthy_streams]
+            ranked.sort(key=lambda x: x[1], reverse=True)
+            return ranked
+
+    def should_switch_stream(
+        self,
+        current_url: StreamURL,
+        current_quality: float,
+    ) -> StreamURL | None:
+        """
+        Determine if we should switch to a better quality stream.
+
+        Args:
+            current_url: The currently playing stream URL.
+            current_quality: The current stream's quality score.
+
+        Returns:
+            The URL of a better stream to switch to, or None if current is best.
+        """
+        best_stream = self.get_best_quality_stream()
+
+        if not best_stream or best_stream == current_url:
+            return None
+
+        best_quality = self.get_quality_score(best_stream)
+
+        # Only switch if the better stream exceeds the threshold
+        quality_diff = best_quality - current_quality
+        if quality_diff >= self.quality_thresholds.switch_threshold_score:
+            logger.info(
+                "Found better quality stream (%.2f vs %.2f): %s",
+                best_quality,
+                current_quality,
+                best_stream,
+            )
+            return best_stream
+
+        return None

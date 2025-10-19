@@ -6,7 +6,10 @@ A robust, production-quality stream crawler and player for live video streams. B
 
 - **Smart Crawling**: Uses Selenium to discover video streams by analyzing both DOM and network traffic
 - **Automatic Failover**: Seamlessly switches between streams if one fails
-- **Quality Monitoring**: Asynchronous monitoring of stream latency, FPS, and frame updates
+- **Real-Time Quality Monitoring**: Monitors latency, FPS, and buffering during playback
+- **Intelligent Stream Switching**: Automatically switches to higher quality streams when available
+- **Quality-Based Stream Ranking**: Prioritizes streams by measured performance metrics
+- **Configurable Thresholds**: Customize quality requirements and switching behavior
 - **Multiple Players**: Supports mpv, vlc, and ffplay
 - **Type-Safe**: Comprehensive type hints throughout the codebase
 - **Well-Tested**: Full test coverage with pytest
@@ -92,20 +95,32 @@ streams:
 ### Command Line
 
 ```bash
-# Play streams from streams.yaml
+# Play streams from streams.yaml with automatic quality monitoring
 streamfox
 
 # Play a specific stream URL
 streamfox --url https://example.com/stream.m3u8
 
-# Monitor streams for quality (doesn't play)
+# Disable quality monitoring during playback
+streamfox --disable-quality-monitoring
+
+# Monitor streams for quality without playing
 streamfox --monitor
+
+# Customize quality thresholds
+streamfox --max-latency 2000 --min-fps 10 --quality-check-interval 5
+
+# Set switch threshold (quality difference needed to trigger switch)
+streamfox --switch-threshold 0.5
 
 # Enable debug logging
 streamfox --debug
 
 # Set maximum crawl depth
 streamfox --max-depth 3
+
+# Continuous playback with larger pool of backup streams
+streamfox --continuous --pool-size 5
 ```
 
 ### Using Make
@@ -127,7 +142,13 @@ make monitor
 ### Programmatic Usage
 
 ```python
-from streamfox import VideoCrawler, StreamPlayer, AsyncStreamMonitor
+from streamfox import (
+    VideoCrawler,
+    StreamPlayer,
+    StreamPool,
+    PlaybackMonitor,
+    QualityThresholds,
+)
 
 # Crawl a site for video streams
 crawler = VideoCrawler("https://example.com", max_depth=2)
@@ -135,13 +156,52 @@ crawler.crawl()
 print(f"Found {len(crawler.video_urls)} streams")
 crawler.close()
 
-# Play streams with automatic failover
-player = StreamPlayer(crawler.video_urls)
-player.play()
+# Configure quality thresholds
+thresholds = QualityThresholds(
+    max_latency_ms=2000.0,  # Max acceptable latency
+    min_fps=10.0,           # Min acceptable FPS
+    quality_check_interval_seconds=5.0,  # Check every 5s
+    switch_threshold_score=0.4,  # Switch if 0.4+ better
+)
 
-# Monitor stream quality
-monitor = AsyncStreamMonitor(crawler.video_urls, check_interval=10)
-monitor.start_monitoring()
+# Create a pool of streams with quality tracking
+stream_pool = StreamPool(
+    initial_streams=list(crawler.video_urls),
+    min_pool_size=3,
+    quality_thresholds=thresholds,
+)
+stream_pool.start_monitoring()
+
+# Play streams with automatic quality-based switching
+player = StreamPlayer(
+    stream_urls=list(crawler.video_urls),
+    continuous=True,
+    stream_pool=stream_pool,
+    enable_quality_monitoring=True,
+    quality_thresholds=thresholds,
+)
+
+try:
+    player.play()
+finally:
+    stream_pool.stop_monitoring()
+
+# Or monitor a single stream during playback
+def on_quality_change(metrics):
+    print(f"Quality: {metrics.quality_score:.2f}")
+    print(f"  Latency: {metrics.latency_ms}ms")
+    print(f"  FPS: {metrics.fps}")
+    print(f"  Active: {metrics.is_active}")
+
+monitor = PlaybackMonitor(
+    url="https://example.com/stream.m3u8",
+    thresholds=thresholds,
+    check_interval=10.0,
+    on_quality_change=on_quality_change,
+)
+monitor.start()
+# ... monitor runs in background ...
+monitor.stop()
 ```
 
 ## Development
@@ -234,22 +294,25 @@ make all
 
 ```
 streamfox/
-├── src/streamfox/         # Source code
-│   ├── __init__.py        # Package initialization
-│   ├── cli.py             # Command-line interface
-│   ├── crawler.py         # Video stream crawler
-│   ├── monitor.py         # Async stream quality monitor
-│   ├── player.py          # Stream player with failover
-│   └── types.py           # Type definitions
-├── tests/                 # Test suite
+├── src/streamfox/              # Source code
+│   ├── __init__.py             # Package initialization
+│   ├── cli.py                  # Command-line interface
+│   ├── crawler.py              # Video stream crawler
+│   ├── monitor.py              # Async stream quality monitor
+│   ├── playback_monitor.py     # Real-time playback quality monitor
+│   ├── player.py               # Stream player with quality-based switching
+│   ├── stream_pool.py          # Stream pool with quality ranking
+│   └── types.py                # Type definitions (metrics, thresholds)
+├── tests/                      # Test suite
 │   ├── test_cli.py
 │   ├── test_crawler.py
 │   ├── test_monitor.py
-│   └── test_player.py
-├── pyproject.toml         # Project configuration
-├── Makefile              # Development commands
-├── streams.yaml          # Stream configuration
-└── README.md             # This file
+│   ├── test_player.py
+│   └── test_quality_monitoring.py  # Quality monitoring tests
+├── pyproject.toml              # Project configuration
+├── Makefile                    # Development commands
+├── streams.yaml                # Stream configuration
+└── README.md                   # This file
 ```
 
 ## How It Works
@@ -262,12 +325,34 @@ The `VideoCrawler` uses Selenium with Chrome to:
 - Recursively follow links up to a specified depth
 - Detect common streaming formats (.m3u8, .mp4, .ts, .mpd, .webm)
 
-### 2. Playing
+### 2. Playing with Quality Monitoring
 The `StreamPlayer`:
-- Detects available video players on your system
-- Plays streams in order
-- Automatically switches to the next stream if one fails
+- Detects available video players on your system (mpv, vlc, ffplay)
+- Plays streams with automatic failover to backup streams
+- **Monitors stream quality in real-time** during playback
+- **Automatically switches to higher quality streams** when available
+- Tracks latency, FPS, buffering, and frame activity
+- Maintains a pool of validated backup streams
 - Handles user interrupts gracefully
+
+**Quality Metrics Tracked:**
+- **Latency**: HTTP response time (target: < 1000ms excellent, > 3000ms poor)
+- **FPS**: Frames per second (target: > 24fps excellent, < 5fps poor)
+- **Buffering**: Detects frozen/identical frames
+- **Stream Activity**: Verifies frames are updating with motion detection
+
+**Quality Scoring:**
+Streams are scored from 0.0 (worst) to 1.0 (best) based on:
+- Latency (40% weight)
+- FPS (30% weight)
+- Activity (20% weight)
+- Error count (10% weight)
+
+**Automatic Switching:**
+- Quality is checked every 10 seconds (configurable)
+- Switches to better stream if quality difference exceeds threshold (default: 0.3)
+- Seamlessly terminates poor stream and starts better one
+- No manual intervention required
 
 ### 3. Monitoring
 The `AsyncStreamMonitor`:
@@ -275,6 +360,7 @@ The `AsyncStreamMonitor`:
 - Verifies frames are updating (not frozen)
 - Measures FPS and detects buffering
 - Runs checks concurrently for all streams
+- Used for monitor-only mode (`--monitor` flag)
 
 ## Troubleshooting
 

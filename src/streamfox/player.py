@@ -4,10 +4,14 @@ import logging
 import subprocess
 import time
 
+from .playback_monitor import PlaybackMonitor
 from .stream_pool import StreamPool
-from .types import StreamURL
+from .types import QualityThresholds, StreamQualityMetrics, StreamURL
 
 logger = logging.getLogger(__name__)
+
+# Special return code to indicate quality-based stream switch
+QUALITY_SWITCH_RETURN_CODE = -999
 
 
 class StreamPlayer:
@@ -26,6 +30,10 @@ class StreamPlayer:
         current_index: Index of currently playing stream.
         continuous: Whether to run in continuous playback mode.
         stream_pool: Pool of backup streams for continuous mode.
+        enable_quality_monitoring: Whether to monitor stream quality during playback.
+        quality_thresholds: Thresholds for quality-based switching.
+        current_stream_url: The currently playing stream URL.
+        playback_monitor: Quality monitor for the current stream.
     """
 
     def __init__(
@@ -34,6 +42,8 @@ class StreamPlayer:
         player_cmd: str = "mpv",
         continuous: bool = False,
         stream_pool: StreamPool | None = None,
+        enable_quality_monitoring: bool = True,
+        quality_thresholds: QualityThresholds | None = None,
     ) -> None:
         """
         Initialize the stream player.
@@ -43,6 +53,8 @@ class StreamPlayer:
             player_cmd: Preferred video player (default: 'mpv').
             continuous: Enable continuous playback mode (default: False).
             stream_pool: StreamPool to use for continuous mode (optional).
+            enable_quality_monitoring: Enable real-time quality monitoring (default: True).
+            quality_thresholds: Quality thresholds for monitoring (uses defaults if None).
         """
         self.stream_urls = list(stream_urls)
         self.player_cmd = player_cmd
@@ -50,10 +62,19 @@ class StreamPlayer:
         self.process: subprocess.Popen | None = None
         self.continuous = continuous
         self.stream_pool = stream_pool
+        self.enable_quality_monitoring = enable_quality_monitoring
+        self.quality_thresholds = quality_thresholds or QualityThresholds()
         self._stop_requested = False
+        self._switch_requested = False
+        self._switch_to_url: StreamURL | None = None
+        self.current_stream_url: StreamURL | None = None
+        self.playback_monitor: PlaybackMonitor | None = None
+
         logger.info("StreamPlayer initialized with %d streams", len(self.stream_urls))
         if continuous:
             logger.info("Continuous playback mode enabled")
+        if enable_quality_monitoring:
+            logger.info("Quality monitoring enabled")
 
     def _find_available_player(self) -> str | None:
         """
@@ -96,6 +117,106 @@ class StreamPlayer:
             return ["vlc", url]
         # ffplay
         return ["ffplay", "-autoexit", url]
+
+    def _on_quality_change(self, metrics: StreamQualityMetrics) -> None:
+        """
+        Callback invoked when quality metrics update.
+
+        Args:
+            metrics: The updated quality metrics.
+        """
+        # Update the stream pool with quality metrics
+        if self.stream_pool:
+            self.stream_pool.update_quality_metrics(metrics)
+
+            # Check if we should switch to a better stream
+            if self.continuous and not self._switch_requested:
+                better_stream = self.stream_pool.should_switch_stream(
+                    metrics.url,
+                    metrics.quality_score,
+                )
+                if better_stream:
+                    logger.info("Requesting switch to better quality stream")
+                    self._switch_requested = True
+                    self._switch_to_url = better_stream
+
+    def _start_quality_monitoring(self, url: StreamURL) -> None:
+        """
+        Start quality monitoring for the given stream.
+
+        Args:
+            url: The stream URL to monitor.
+        """
+        if not self.enable_quality_monitoring:
+            return
+
+        # Stop any existing monitor
+        self._stop_quality_monitoring()
+
+        # Create and start new monitor
+        self.playback_monitor = PlaybackMonitor(
+            url=url,
+            thresholds=self.quality_thresholds,
+            check_interval=self.quality_thresholds.quality_check_interval_seconds,
+            on_quality_change=self._on_quality_change,
+        )
+        self.playback_monitor.start()
+        logger.debug("Started quality monitoring for %s", url)
+
+    def _stop_quality_monitoring(self) -> None:
+        """Stop the current quality monitoring."""
+        if self.playback_monitor:
+            self.playback_monitor.stop()
+            self.playback_monitor = None
+            logger.debug("Stopped quality monitoring")
+
+    def _wait_for_stream_with_monitoring(self) -> int:
+        """
+        Wait for the stream process to finish, checking for quality-based switch requests.
+
+        Returns:
+            The return code of the process (0 for success, non-zero for failure).
+            Returns -999 if a quality-based switch was requested.
+        """
+        if not self.process:
+            return -1
+
+        # Check interval for switch requests (in seconds)
+        check_interval = 1.0
+
+        while True:
+            # Poll the process
+            return_code = self.process.poll()
+
+            # If process has ended, return its code
+            if return_code is not None:
+                self._stop_quality_monitoring()
+                return return_code
+
+            # Check if a quality-based switch was requested
+            if self._switch_requested and self._switch_to_url:
+                logger.info(
+                    "Quality-based switch requested from %s to %s",
+                    self.current_stream_url,
+                    self._switch_to_url,
+                )
+                # Terminate current stream
+                self.process.terminate()
+                self._stop_quality_monitoring()
+
+                # Return the switch URL to the pool so it can be picked up next
+                if self.stream_pool:
+                    self.stream_pool.return_stream(self._switch_to_url)
+
+                # Reset switch flags
+                self._switch_requested = False
+                self._switch_to_url = None
+
+                # Return special code to indicate switch
+                return QUALITY_SWITCH_RETURN_CODE
+
+            # Sleep briefly before next check
+            time.sleep(check_interval)
 
     def _get_next_stream_url(self) -> StreamURL | None:
         """
@@ -177,6 +298,7 @@ class StreamPlayer:
             logger.info("Playing stream (pool size: %d): %s", pool_size, url)
 
             try:
+                self.current_stream_url = url
                 cmd = self._build_player_command(player, url)
                 self.process = subprocess.Popen(
                     cmd,
@@ -184,8 +306,17 @@ class StreamPlayer:
                     stderr=subprocess.PIPE,
                 )
 
-                # Wait for the stream to finish or fail
-                return_code = self.process.wait()
+                # Start quality monitoring for this stream
+                self._start_quality_monitoring(url)
+
+                # Wait for the stream to finish or fail, checking for switch requests
+                return_code = self._wait_for_stream_with_monitoring()
+
+                # Handle quality-based switch (special return code)
+                if return_code == QUALITY_SWITCH_RETURN_CODE:
+                    logger.info("Switched to better quality stream")
+                    consecutive_failures = 0  # Reset failure counter
+                    continue  # Continue to next stream immediately
 
                 if return_code != 0:
                     consecutive_failures += 1
@@ -221,6 +352,7 @@ class StreamPlayer:
 
             except KeyboardInterrupt:
                 logger.info("Playback interrupted by user")
+                self._stop_quality_monitoring()
                 if self.process:
                     self.process.terminate()
                 break
@@ -243,6 +375,7 @@ class StreamPlayer:
     def stop(self) -> None:
         """Stop the currently playing stream and exit continuous mode."""
         self._stop_requested = True
+        self._stop_quality_monitoring()
         if self.process:
             self.process.terminate()
             self.process = None
