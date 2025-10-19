@@ -3,6 +3,7 @@
 import argparse
 import logging
 import pathlib
+import webbrowser
 
 import yaml
 
@@ -29,6 +30,38 @@ def setup_logging(debug: bool = False) -> None:
             logging.StreamHandler(),
         ],
     )
+
+
+def is_direct_stream_url(url: str) -> bool:
+    """
+    Check if a URL is likely a direct video stream (playable by mpv/vlc/ffplay).
+
+    Args:
+        url: The URL to check.
+
+    Returns:
+        True if URL appears to be a direct stream, False if it's an embed/iframe.
+    """
+    # Direct stream indicators
+    stream_extensions = [".m3u8", ".mp4", ".ts", ".mpd", ".webm", ".mkv", ".avi", ".mov"]
+    stream_patterns = ["manifest", "playlist", "chunk"]
+
+    url_lower = url.lower()
+
+    # Check for direct stream file extensions
+    if any(ext in url_lower for ext in stream_extensions):
+        return True
+
+    # Check for stream-related patterns
+    if any(pattern in url_lower for pattern in stream_patterns):
+        return True
+
+    # If it contains "embed" or "iframe", it's likely not a direct stream
+    if any(pattern in url_lower for pattern in ["embed", "iframe", "player"]):
+        return False
+
+    # Default: assume it's NOT a direct stream to be safe
+    return False
 
 
 def load_streams_from_yaml(yaml_path: pathlib.Path | None = None) -> list[str]:
@@ -131,6 +164,11 @@ Examples:
         type=pathlib.Path,
         help="Path to streams.yaml configuration file",
     )
+    parser.add_argument(
+        "--exhaustive",
+        action="store_true",
+        help="Crawl all pages exhaustively (don't stop when videos are found)",
+    )
 
     args = parser.parse_args()
     setup_logging(args.debug)
@@ -159,6 +197,7 @@ Examples:
             stream_url,
             max_depth=args.max_depth,
             headless=args.headless,
+            stop_on_first_video=not args.exhaustive,
         )
 
         try:
@@ -167,12 +206,31 @@ Examples:
 
             # If we found streams and user wants to play immediately, do it
             if crawler.video_urls and not args.monitor:
+                # Separate direct streams from iframe/embed URLs
+                direct_streams = [url for url in crawler.video_urls if is_direct_stream_url(url)]
+                iframe_urls = [url for url in crawler.video_urls if not is_direct_stream_url(url)]
+
                 logger.info("Found %d video streams!", len(crawler.video_urls))
                 for idx, url in enumerate(crawler.video_urls, 1):
                     logger.info("  %d. %s", idx, url)
 
-                player = StreamPlayer(crawler.video_urls)
-                player.play()
+                # Open iframe URLs in browser
+                if iframe_urls:
+                    logger.info(
+                        "Opening %d iframe/embed URLs in browser (can't play HTML with video player)...",
+                        len(iframe_urls),
+                    )
+                    for url in iframe_urls:
+                        logger.info("  Opening in browser: %s", url)
+                        webbrowser.open(url)
+
+                # Play direct streams with video player
+                if direct_streams:
+                    logger.info("Playing %d direct stream URLs...", len(direct_streams))
+                    player = StreamPlayer(direct_streams)
+                    player.play()
+                elif not iframe_urls:
+                    logger.warning("No playable streams found (only non-direct URLs)")
                 return
         finally:
             crawler.close()
@@ -186,11 +244,31 @@ Examples:
             monitor.start_monitoring()
         else:
             # Play mode (default)
+            # Separate direct streams from iframe/embed URLs
+            direct_streams = [url for url in all_video_urls if is_direct_stream_url(url)]
+            iframe_urls = [url for url in all_video_urls if not is_direct_stream_url(url)]
+
             logger.info("Found %d total video streams!", len(all_video_urls))
             for idx, url in enumerate(all_video_urls, 1):
                 logger.info("  %d. %s", idx, url)
-            player = StreamPlayer(all_video_urls)
-            player.play()
+
+            # Open iframe URLs in browser
+            if iframe_urls:
+                logger.info(
+                    "Opening %d iframe/embed URLs in browser (can't play HTML with video player)...",
+                    len(iframe_urls),
+                )
+                for url in iframe_urls:
+                    logger.info("  Opening in browser: %s", url)
+                    webbrowser.open(url)
+
+            # Play direct streams with video player
+            if direct_streams:
+                logger.info("Playing %d direct stream URLs...", len(direct_streams))
+                player = StreamPlayer(direct_streams)
+                player.play()
+            elif not iframe_urls:
+                logger.warning("No playable streams found (only non-direct URLs)")
     else:
         logger.error("No video streams found!")
 

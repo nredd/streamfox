@@ -9,7 +9,7 @@
 
 streams:
   # NASA TV - Public live stream
-  - https://www.nasa.gov/live
+  - https://www.nasa.gov/nasalive
 
   # Example: Add your own streams below
   # - https://example.com/your-stream.m3u8

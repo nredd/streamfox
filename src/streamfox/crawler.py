@@ -27,6 +27,7 @@ class VideoCrawler:
         video_urls: Set of discovered video stream URLs.
         max_depth: Maximum recursion depth for crawling.
         headless: Whether to run browser in headless mode.
+        stop_on_first_video: Stop crawling once videos are found.
     """
 
     def __init__(
@@ -34,6 +35,7 @@ class VideoCrawler:
         base_url: URL,
         max_depth: int = 10,
         headless: bool = True,
+        stop_on_first_video: bool = True,
     ) -> None:
         """
         Initialize the video crawler.
@@ -42,12 +44,14 @@ class VideoCrawler:
             base_url: The starting URL to begin crawling from.
             max_depth: Maximum depth to crawl (default: 10).
             headless: Run browser in headless mode (default: True).
+            stop_on_first_video: Stop crawling once videos are found (default: True).
         """
         self.base_url = base_url
         self.visited_urls: set[URL] = set()
         self.video_urls: set[StreamURL] = set()
         self.max_depth = max_depth
         self.headless = headless
+        self.stop_on_first_video = stop_on_first_video
         self.driver: webdriver.Chrome | None = None
         logger.info("VideoCrawler initialized with %s", self.base_url)
 
@@ -85,7 +89,9 @@ class VideoCrawler:
         try:
             self.driver.get(url)
             # Wait for page to load and JavaScript to execute
-            time.sleep(5)
+            # Increased wait time for complex JavaScript-heavy pages
+            logger.debug("Waiting for page to fully load...")
+            time.sleep(10)
 
             # Extract from network logs first (most reliable for streaming sites)
             self._extract_from_network_logs()
@@ -97,21 +103,57 @@ class VideoCrawler:
             for video in soup.find_all("video"):
                 src = video.get("src")
                 if src and isinstance(src, str):
+                    logger.info("Found video tag with src: %s", src)
                     self.video_urls.add(src)
                 # Check <source> tags inside <video>
                 for source in video.find_all("source"):
                     src = source.get("src")
                     if src and isinstance(src, str):
+                        logger.info("Found source tag with src: %s", src)
                         self.video_urls.add(src)
 
             # Find embedded iframes (common in streaming sites)
+            # Filter out known non-video iframes
+            excluded_iframe_domains = [
+                "googletagmanager.com",
+                "google-analytics.com",
+                "doubleclick.net",
+                "about:blank",
+                "cloudflare.com",
+            ]
+
+            # Video-related iframe patterns - expanded list
+            video_iframe_patterns = [
+                "youtube.com",
+                "youtube-nocookie.com",
+                "vimeo.com",
+                "twitch.tv",
+                "dailymotion.com",
+                "ustream.tv",
+                "livestream.com",
+                "player",  # Generic player iframes
+                "embed",  # Generic embed iframes
+                "video",  # Generic video iframes
+                "stream",  # Generic stream iframes
+            ]
+
             for iframe in soup.find_all("iframe"):
-                src = iframe.get("src")
+                src = iframe.get("src") or iframe.get("data-src")
                 if src and isinstance(src, str):
+                    # Skip excluded domains
+                    if any(domain in src.lower() for domain in excluded_iframe_domains):
+                        logger.debug("Skipping excluded iframe: %s", src)
+                        continue
+
                     logger.info("Found iframe: %s", src)
-                    # Recursively check iframes for streams
-                    if src.startswith("http") and src not in self.visited_urls:
+
+                    # Add video-related iframes
+                    if any(pattern in src.lower() for pattern in video_iframe_patterns):
+                        logger.info("Adding video iframe: %s", src)
                         self.video_urls.add(src)
+                    else:
+                        # Log iframes we're not sure about
+                        logger.debug("Skipping non-video iframe: %s", src)
 
         except Exception:
             logger.exception("Error finding videos on %s", url)
@@ -137,7 +179,11 @@ class VideoCrawler:
 
                         # Look for video/streaming URLs
                         video_extensions = [".m3u8", ".mp4", ".ts", ".mpd", ".webm"]
-                        if any(ext in url for ext in video_extensions):
+                        # Filter out false positives like .webmanifest
+                        excluded_extensions = [".webmanifest", ".json", ".xml"]
+                        if any(ext in url for ext in video_extensions) and not any(
+                            ext in url for ext in excluded_extensions
+                        ):
                             logger.info("Found stream URL: %s", url)
                             self.video_urls.add(url)
                         elif any(
@@ -170,6 +216,11 @@ class VideoCrawler:
         try:
             self.find_videos_on_page(url)
             logger.info("[Crawled] %s | Found %d videos total", url, len(self.video_urls))
+
+            # Stop if we found videos and stop_on_first_video is enabled
+            if self.stop_on_first_video and self.video_urls:
+                logger.info("Found videos, stopping crawl as requested")
+                return
 
             # Only continue crawling if we haven't exceeded depth
             if depth < self.max_depth and self.driver:
