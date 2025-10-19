@@ -175,7 +175,8 @@ def test_play_failover_to_next_url(mock_popen: MagicMock) -> None:
 
     # Both URLs should have been tried
     assert mock_popen.call_count == 2
-    assert player.current_index == 1
+    # After playing 2 streams, current_index points to next stream (would be 2)
+    assert player.current_index == 2
 
 
 @patch("subprocess.Popen")

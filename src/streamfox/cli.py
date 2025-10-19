@@ -10,6 +10,7 @@ import yaml
 from .crawler import VideoCrawler
 from .monitor import AsyncStreamMonitor
 from .player import StreamPlayer
+from .stream_pool import StreamPool
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,9 @@ Examples:
   # Play a specific stream URL
   streamfox --url https://example.com/stream.m3u8
 
+  # Continuous playback with automatic failover
+  streamfox --continuous --pool-size 5
+
   # Monitor streams for quality
   streamfox --monitor
 
@@ -168,6 +172,17 @@ Examples:
         "--exhaustive",
         action="store_true",
         help="Crawl all pages exhaustively (don't stop when videos are found)",
+    )
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Continuous playback mode with automatic failover (keeps playing indefinitely)",
+    )
+    parser.add_argument(
+        "--pool-size",
+        type=int,
+        default=3,
+        help="Minimum number of backup streams to maintain in continuous mode (default: 3)",
     )
 
     args = parser.parse_args()
@@ -227,8 +242,30 @@ Examples:
                 # Play direct streams with video player
                 if direct_streams:
                     logger.info("Playing %d direct stream URLs...", len(direct_streams))
-                    player = StreamPlayer(direct_streams)
-                    player.play()
+
+                    # Set up continuous mode if requested
+                    if args.continuous:
+                        logger.info(
+                            "Setting up continuous playback with pool size %d", args.pool_size
+                        )
+                        stream_pool = StreamPool(
+                            initial_streams=direct_streams,
+                            min_pool_size=args.pool_size,
+                        )
+                        stream_pool.start_monitoring()
+
+                        player = StreamPlayer(
+                            stream_urls=direct_streams,
+                            continuous=True,
+                            stream_pool=stream_pool,
+                        )
+                        try:
+                            player.play()
+                        finally:
+                            stream_pool.stop_monitoring()
+                    else:
+                        player = StreamPlayer(direct_streams)
+                        player.play()
                 elif not iframe_urls:
                     logger.warning("No playable streams found (only non-direct URLs)")
                 return
@@ -265,8 +302,28 @@ Examples:
             # Play direct streams with video player
             if direct_streams:
                 logger.info("Playing %d direct stream URLs...", len(direct_streams))
-                player = StreamPlayer(direct_streams)
-                player.play()
+
+                # Set up continuous mode if requested
+                if args.continuous:
+                    logger.info("Setting up continuous playback with pool size %d", args.pool_size)
+                    stream_pool = StreamPool(
+                        initial_streams=direct_streams,
+                        min_pool_size=args.pool_size,
+                    )
+                    stream_pool.start_monitoring()
+
+                    player = StreamPlayer(
+                        stream_urls=direct_streams,
+                        continuous=True,
+                        stream_pool=stream_pool,
+                    )
+                    try:
+                        player.play()
+                    finally:
+                        stream_pool.stop_monitoring()
+                else:
+                    player = StreamPlayer(direct_streams)
+                    player.play()
             elif not iframe_urls:
                 logger.warning("No playable streams found (only non-direct URLs)")
     else:
