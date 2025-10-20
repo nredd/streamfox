@@ -246,6 +246,8 @@ To add dependencies:
 
 ### Code Quality
 
+All targets automatically install dependencies before running.
+
 ```bash
 # Format code
 make format
@@ -259,12 +261,14 @@ make type
 # Run tests with coverage
 make test
 
+# Run all checks in parallel (CI/smoke tests)
+make smoke
+
 # Clean all artifacts (cache, venv, logs, untracked files)
 make clean
-
-# Run everything (format, lint, type check, test)
-make all
 ```
+
+**Note**: `make smoke` runs all code quality checks (format, lint, type, test) in parallel using tox. This is the same check that runs in CI.
 
 ### Project Structure
 
@@ -380,8 +384,10 @@ uv run pytest --cov=src/streamfox --cov-report=html
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Run the full test suite: `make all`
+4. Run the full test suite: `make smoke`
 5. Submit a pull request
+
+All pull requests are automatically tested with GitHub Actions, which runs `make smoke` to verify code quality.
 
 ## License
 

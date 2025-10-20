@@ -1,4 +1,4 @@
-.PHONY: help install format lint type test smoke clean run all
+.PHONY: help install format lint type test smoke clean run
 
 # Virtual environment configuration
 VENV := .venv
@@ -21,46 +21,33 @@ install:  ## Create venv and install all dependencies
 	@echo "To activate the virtual environment, run:"
 	@echo "  source $(VENV)/bin/activate"
 
-format:  ## Format code with ruff
-	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
+format: install  ## Format code with ruff
 	$(UV) run ruff format .
 
-lint:  ## Lint code with ruff
-	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
+lint: install  ## Lint code with ruff
 	$(UV) run ruff check . --fix
 
-type:  ## Type check with mypy
-	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
+type: install  ## Type check with mypy
 	$(UV) run mypy src/streamfox
 
-test:  ## Run tests with pytest
-	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
+test: install  ## Run tests with pytest
 	$(UV) run pytest -v --cov=src/streamfox --cov-report=term-missing
 
-smoke:  ## Run all checks in parallel with tox (format, lint, type, test)
-	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
+smoke: install  ## Run all checks in parallel with tox (format, lint, type, test)
 	$(UV) run tox run-parallel
 
 clean:  ## Clean all build artifacts, cache, logs, venv per .gitignore
 	git clean -fXd
 	@echo "✓ Cleaned all artifacts"
 
-run:  ## Run streamfox CLI
-	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
+run: install  ## Run streamfox CLI
 	$(UV) run streamfox
 
-run-debug:  ## Run streamfox with debug logging
-	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
+run-debug: install  ## Run streamfox with debug logging
 	$(UV) run streamfox --debug
 
-run-url:  ## Run streamfox with a specific URL (usage: make run-url URL=https://example.com/stream)
-	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
+run-url: install  ## Run streamfox with a specific URL (usage: make run-url URL=https://example.com/stream)
 	$(UV) run streamfox --url $(URL)
 
-monitor:  ## Run in monitor mode
-	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
+monitor: install  ## Run in monitor mode
 	$(UV) run streamfox --monitor
-
-all: format lint type test  ## Run full CI pipeline
-	@echo ""
-	@echo "✓ All checks passed!"
