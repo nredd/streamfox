@@ -3,8 +3,6 @@
 import time
 from unittest.mock import MagicMock, Mock, patch
 
-import pytest
-
 from streamfox.playback_monitor import PlaybackMonitor
 from streamfox.stream_pool import StreamPool
 from streamfox.types import QualityThresholds, StreamQualityMetrics
@@ -125,7 +123,7 @@ class TestPlaybackMonitor:
 
     @patch("streamfox.playback_monitor.cv2.VideoCapture")
     @patch("streamfox.playback_monitor.requests.get")
-    def test_monitor_creation(self, mock_requests, mock_cv2):
+    def test_monitor_creation(self, _mock_requests, _mock_cv2):
         """Test creating a playback monitor."""
         url = "http://test.com/stream.m3u8"
         monitor = PlaybackMonitor(url=url, check_interval=1.0)
@@ -137,7 +135,7 @@ class TestPlaybackMonitor:
 
     @patch("streamfox.playback_monitor.cv2.VideoCapture")
     @patch("streamfox.playback_monitor.requests.get")
-    def test_monitor_start_stop(self, mock_requests, mock_cv2):
+    def test_monitor_start_stop(self, _mock_requests, _mock_cv2):
         """Test starting and stopping monitor."""
         url = "http://test.com/stream.m3u8"
         monitor = PlaybackMonitor(url=url, check_interval=0.1)

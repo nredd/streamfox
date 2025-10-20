@@ -39,6 +39,7 @@ dev = [
     "mypy>=1.8.0",
     "types-requests>=2.31.0",
     "types-pyyaml>=6.0.0",
+    "tox>=4.0.0",
 ]
 
 [project.scripts]
@@ -92,7 +93,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "PLR2004"]  # Allow assert and magic values in tests
+"tests/**/*.py" = ["S101", "PLR2004", "ARG002", "PT019"]  # Allow assert, magic values, unused args in tests
 
 [tool.mypy]
 python_version = "3.13"
@@ -132,3 +133,53 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+env_list =
+    format
+    lint
+    type
+    py313
+skip_missing_interpreters = true
+isolated_build = true
+
+[testenv]
+description = Run unit tests with pytest
+deps =
+    pytest>=8.0.0
+    pytest-cov>=4.1.0
+    pytest-asyncio>=0.23.0
+package = wheel
+wheel_build_env = .pkg
+commands =
+    pytest {posargs:tests/ -v --cov=src/streamfox --cov-report=term-missing}
+
+[testenv:format]
+description = Format code with ruff
+skip_install = true
+deps = ruff>=0.1.0
+commands =
+    ruff format --check .
+
+[testenv:lint]
+description = Lint code with ruff
+skip_install = true
+deps = ruff>=0.1.0
+commands =
+    ruff check .
+
+[testenv:type]
+description = Type check with mypy
+deps =
+    mypy>=1.8.0
+    types-requests>=2.31.0
+    types-pyyaml>=6.0.0
+commands =
+    mypy src/streamfox
+
+[testenv:py313]
+description = Run tests on Python 3.13
+basepython = python3.13
+"""

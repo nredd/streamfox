@@ -1,4 +1,4 @@
-.PHONY: help install format lint type test clean run all
+.PHONY: help install format lint type test smoke clean run all
 
 # Virtual environment configuration
 VENV := .venv
@@ -37,12 +37,12 @@ test:  ## Run tests with pytest
 	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
 	$(UV) run pytest -v --cov=src/streamfox --cov-report=term-missing
 
-clean:  ## Clean all build artifacts, cache, logs, venv, and untracked files
-	rm -rf .pytest_cache .ruff_cache .mypy_cache dist build *.egg-info $(VENV)
-	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete 2>/dev/null || true
-	find . -type f -name "*.log" -delete 2>/dev/null || true
-	git clean -fdX 2>/dev/null || true
+smoke:  ## Run all checks in parallel with tox (format, lint, type, test)
+	@if [ ! -d "$(VENV)" ]; then echo "⚠️  Virtual environment not found. Run 'make install' first."; exit 1; fi
+	$(UV) run tox run-parallel
+
+clean:  ## Clean all build artifacts, cache, logs, venv per .gitignore
+	git clean -fXd
 	@echo "✓ Cleaned all artifacts"
 
 run:  ## Run streamfox CLI

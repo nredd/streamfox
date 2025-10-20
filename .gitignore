@@ -178,3 +178,6 @@ streamfox.py.old
 .vscode/
 .ruff_cache/
 requirements.txt  # Use pyproject.toml instead
+
+# Claude Code local settings
+.claude/
