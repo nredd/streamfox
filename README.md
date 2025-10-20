@@ -58,8 +58,6 @@ streamfox --url https://www.nasa.gov/live
 make run-url URL=https://www.nasa.gov/live
 ```
 
-See [USAGE.md](USAGE.md) for detailed examples.
-
 ### Install a video player
 
 **macOS:**
@@ -212,33 +210,11 @@ monitor.stop()
 # Create venv and install all dependencies (including dev tools)
 make install
 
-# Activate the virtual environment
+# Activate the virtual environment (optional - make commands work without this)
 source .venv/bin/activate
-
-# Or use the dev target for one-command setup
-make dev
 ```
 
-### Virtual Environment Management
-
-```bash
-# Create virtual environment only
-make venv
-
-# Show activation instructions
-make activate
-
-# Show venv and package information
-make info
-
-# Remove virtual environment
-make clean-venv
-
-# Clean everything (artifacts + venv)
-make clean-all
-```
-
-**Note**: All `make` commands automatically use the virtual environment. You don't need to activate it manually when using `make`.
+**Note**: All `make` commands automatically use the virtual environment via `uv run`. You don't need to activate it manually when using `make`.
 
 ### Dependencies
 
@@ -283,8 +259,8 @@ make type
 # Run tests with coverage
 make test
 
-# Run tests without coverage (faster)
-make test-fast
+# Clean all artifacts (cache, venv, logs, untracked files)
+make clean
 
 # Run everything (format, lint, type check, test)
 make all
